@@ -1,29 +1,34 @@
+require('dotenv').config();
+
 const express = require('express');
 const mysql = require('mysql');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-// const crypto = require('crypto');
 const verifyToken = require('./authMiddleware');
-const secretKey = require('./secret');
+const secretKey = process.env.SECRET_KEY;
 
 const app = express();
 const PORT = process.env.PORT || 8081;
+
+const db_host = process.env.DB_HOST;
+const db_port = process.env.DB_PORT;
+const db_user = process.env.DB_USER;
+const db_password = process.env.DB_PASSWORD;
+const db_database = process.env.DB_DATABASE;
 
 app.use(cors());
 app.use(express.json());
 app.use(bodyParser.json());
 
 const db = mysql.createConnection({
-    host: "localhost",
-    port: 8889,
-    user: "root",
-    password: "root",
-    database: "music_library"
+    host: db_host,
+    port: db_port,
+    user: db_user,
+    password: db_password,
+    database: db_database
 });
-
-// const secretKey = crypto.randomBytes(32).toString('hex');
 
 db.connect((err) => {
     if (err) {
@@ -215,6 +220,59 @@ app.delete('/api/deleteTrack', verifyToken, (req, res) => {
             return res.status(500).json({ error: 'Internal server error' });
         }
         res.status(200).json({ message: 'Track deleted successfully' });
+    });
+});
+
+// Get user's favorites
+app.get('/api/favorites', verifyToken, (req, res) => {
+    const sql = `
+    SELECT t.*
+    FROM Tracks t
+    INNER JOIN favorites f ON t.TrackId = f.track_id
+    WHERE f.user_id = ?
+    `;
+    db.query(sql, [req.userId], (err, results) => {
+        if (err) {
+            console.error('Error fetching favorites:', err);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+        res.json({ favorites: results });
+    });
+});
+
+// Add a track to favorites
+app.post('/api/favorites/add', verifyToken, (req, res) => {
+    const userId = req.userId;
+    const { trackId } = req.body;
+
+    if (!trackId) {
+        return res.status(400).json({ error: 'Track ID is required' });
+    }
+
+    // SQL to insert a new favorite, avoiding duplicates
+    const sql = "INSERT INTO favorites (user_id, track_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE track_id = track_id";
+    db.query(sql, [userId, trackId], (err, result) => {
+        if (err) {
+            console.error('Error executing SQL query:', err);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+        res.status(201).json({ message: 'Track added to favorites successfully' });
+    });
+});
+
+// Remove a track from favorites
+app.delete('/api/favorites/remove', verifyToken, (req, res) => {
+    const { trackId } = req.body;
+    const sql = `DELETE FROM favorites WHERE user_id = ? AND track_id = ?`;
+    db.query(sql, [req.userId, trackId], (err, result) => {
+        if (err) {
+            console.error('Error removing track from favorites:', err);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Track not found in favorites' });
+        }
+        res.json({ message: 'Track removed from favorites successfully' });
     });
 });
 
